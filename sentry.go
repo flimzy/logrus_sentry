@@ -10,6 +10,7 @@ import (
 	raven "github.com/getsentry/raven-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/xerrors"
 )
 
 var (
@@ -220,7 +221,7 @@ func (hook *SentryHook) Fire(entry *logrus.Entry) error {
 			if currentStacktrace == nil {
 				currentStacktrace = raven.NewStacktrace(stConfig.Skip, stConfig.Context, stConfig.InAppPrefixes)
 			}
-			cause := errors.Cause(err)
+			cause := unwrapError(err)
 			if cause == nil {
 				cause = err
 			}
@@ -303,6 +304,18 @@ func (hook *SentryHook) Flush() {
 	hook.wg.Wait()
 }
 
+// unwrapError unwraps an error using either golang.org/x/xerrors
+// or github.com/pkg/errors conventions, or nil.
+func unwrapError(err error) error {
+	if uw := xerrors.Unwrap(err); uw != nil {
+		return uw
+	}
+	if causer, ok := err.(causer); ok {
+		return causer.Cause()
+	}
+	return nil
+}
+
 func (hook *SentryHook) findStacktrace(err error) *raven.Stacktrace {
 	var stacktrace *raven.Stacktrace
 	var stackErr errors.StackTrace
@@ -315,8 +328,8 @@ func (hook *SentryHook) findStacktrace(err error) *raven.Stacktrace {
 			stacktrace = nil
 			stackErr = tracer.StackTrace()
 		}
-		if cause, ok := err.(causer); ok {
-			err = cause.Cause()
+		if cause := unwrapError(err); cause != nil {
+			err = cause
 		} else {
 			break
 		}
